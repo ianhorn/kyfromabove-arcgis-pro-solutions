@@ -1,0 +1,21 @@
+
+
+# arcgis pro
+*.laz
+*.las
+*.lasd
+*tmp_*
+*.gdb
+ImportLog
+GpMessages
+.backups
+*.geojson
+pro-project_index
+
+# project
+.DS_Store
+.vscode
+.idea
+venv
+.venv
+.vscode/settings.json
