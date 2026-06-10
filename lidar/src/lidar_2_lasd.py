@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 # Environment
 # ------------------------------------------------------------
 
-AOI = arcpy.GetParameterAsText(0) or r'C:/Users/ian.horn/Documents/repos/kyfromabove-arcgis-pro-solutions/pro-project/pro-project.gdb/county_polygon'
+AOI = arcpy.GetParameterAsText(0) or r'pro-project/pro-project.gdb/county_polygon'
 
 geojson_param = arcpy.GetParameterAsText(1) or 'GeoJSONs'
 download_param = arcpy.GetParameterAsText(2) or 'Downloads'
@@ -64,6 +64,7 @@ def convert_to_geojson(feature_class):
 
     if not out_geojson.exists():
         raise RuntimeError("GeoJSON creation failed")
+
 
     with open(out_geojson, "r", encoding="utf-8") as f:
         data = json.load(f)
