@@ -12,6 +12,9 @@ from pathlib import Path
 
 import arcpy
 import requests
+import pdal
+
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 # ------------------------------------------------------------
@@ -22,11 +25,11 @@ MAX_WORKERS = max(1, int(os.cpu_count() * 0.75))
 
 AOI = arcpy.GetParameterAsText(0)
 
-geojson_param = arcpy.GetParameterAsText(4)
+geojson_param = arcpy.GetParameterAsText(0)
 download_param = arcpy.GetParameterAsText(1)
-
 POLYTYPE = arcpy.GetParameterAsText(2).lower()
 LIDAR_PHASE = arcpy.GetParameterAsText(3).lower() or "laz-phase2"
+SEARCH_LIMIT = arcpy.GetParameterAsText(4) 
 
 STAC = "https://drwgni8q1h.execute-api.us-west-2.amazonaws.com"
 SEARCH_URL = f"{STAC}/search"
@@ -72,6 +75,7 @@ def get_assets(search_url, geometry):
     payload = {
         "collections": [LIDAR_PHASE],
         "intersects": geometry,
+        "limit": SEARCH_LIMIT
     }
 
     response = requests.post(search_url, json=payload, timeout=60)
@@ -93,97 +97,30 @@ def get_assets(search_url, geometry):
 
 
 # ------------------------------------------------------------
-# File utilities
-# ------------------------------------------------------------
-
-def wait_for_file(path, timeout=120):
-
-    start = time.time()
-    last_size = -1
-    stable_count = 0
-
-    path = Path(path)
-
-    while True:
-
-        if path.exists():
-            size = path.stat().st_size
-
-            if size == last_size:
-                stable_count += 1
-            else:
-                stable_count = 0
-                last_size = size
-
-            if stable_count >= 3:
-                return
-
-        if time.time() - start > timeout:
-            raise TimeoutError(f"File not stable: {path}")
-
-        time.sleep(1)
-
-
-def download_file(url):
-
-    local_path = DOWNLOAD_FOLDER / Path(url).name
-
-    if not local_path.exists():
-
-        arcpy.AddMessage(f"Downloading {url}")
-
-        with requests.get(url, stream=True, timeout=120) as r:
-            r.raise_for_status()
-
-            with open(local_path, "wb") as f:
-                for chunk in r.iter_content(1024 * 1024):
-                    if chunk:
-                        f.write(chunk)
-
-    wait_for_file(local_path)
-
-    return str(local_path)
-
-
-# ------------------------------------------------------------
 # Conversion
 # ------------------------------------------------------------
 
 def process_lidar(url):
 
-    name = Path(url).stem.replace(".copc", "")
+    outfile_name = f'{Path(DOWNLOAD_FOLDER / ({url}).stem)}las'
 
-    local_input = download_file(url)
+    json = [
+        {
+            "type": "readers.copc",
+            "filename": url
+        },
+        {
+            "type": "writers.las",
+            "filename": outfile_name
+        }
+    ]
 
-    arcpy.AddMessage(f"Converting {name}")
-
-    try:
-        arcpy.conversion.ConvertLas(
-            in_las=local_input,
-            target_folder=str(DOWNLOAD_FOLDER),
-            file_version="SAME_AS_INPUT",
-            compression="NO_COMPRESSION",
-            las_options="REARRANGE_POINTS",
-            define_coordinate_system="NO_FILES"
-        )
-
-        arcpy.AddMessage(f"Done: {name}")
-
-    except Exception as e:
-        arcpy.AddWarning(f"Failed {name}: {e}")
 
 # ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
 
 def main():
-
-    SCRATCH = Path(r"Q:\temp\kyfromabove-arcgis-pro-solutions\arcgis_scratch")
-    SCRATCH.mkdir(parents=True, exist_ok=True)
-    arcpy.env.scratchWorkspace = str(SCRATCH)
-    arcpy.env.workspace = str(SCRATCH)
-    arcpy.env.overwriteOutput = True
-    arcpy.env.preserveGlobalIds = True
 
     geojson = convert_to_geojson(AOI)
     geometry = get_geometry(geojson)
@@ -192,11 +129,18 @@ def main():
 
     arcpy.AddMessage(f"Found {len(url_list)} files.")
 
-    for url in url_list:
-        process_lidar(url)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        ffuture_to_url = {executor.submit(process_lidar, url, 60): url for url in urls}
+        for future in concurrent.futures.as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    data = future.result()
+                except Exception as exc:
+                    print('%r generated an exception: %s' % (url, exc))
+                else:
+                    print('%r page is %d bytes' % (url, len(data)))
 
-    arcpy.AddMessage("Finished.")
 
 
 if __name__ == "__main__":
-    main()
+     main()
