@@ -120,10 +120,6 @@ def download_file(url):
 
     local_path = DOWNLOAD_FOLDER / Path(url).name
 
-    if local_path.exists():
-        arcpy.AddMessage(f"Skipping download: {local_path}.name")
-        return str(local_path)
-
     arcpy.AddMessage(f"Downloading: {url}")
 
     try:
@@ -145,19 +141,22 @@ def run_pdal(url):
 
     arcpy.AddMessage(f"Starting pipeline: {url}")
 
+    outfile_name = DOWNLOAD_FOLDER / f"{Path(url).stem}.las"
+
+    # ----------------------------------------------------
+    # 0. SKIP EARLY IF FINAL OUTPUT EXISTS
+    # ----------------------------------------------------
+    if outfile_name.exists():
+        arcpy.AddMessage(f"Skipping existing: {outfile_name.name}")
+        return
+
     local_input = None
 
     try:
         # ----------------------------------------------------
-        # 1. DOWNLOAD
+        # 1. DOWNLOAD (ONLY IF NEEDED)
         # ----------------------------------------------------
         local_input = download_file(url)
-
-        outfile_name = DOWNLOAD_FOLDER / f"{Path(url).stem}.las"
-
-        if outfile_name.exists():
-            arcpy.AddMessage(f"Skipping existing: {outfile_name.name}")
-            return
 
         # ----------------------------------------------------
         # 2. PROCESS
@@ -183,7 +182,7 @@ def run_pdal(url):
 
     finally:
         # ----------------------------------------------------
-        # 3. CLEANUP (ALWAYS RUNS)
+        # 3. CLEANUP
         # ----------------------------------------------------
         if local_input and Path(local_input).exists():
             try:
@@ -196,6 +195,42 @@ def run_pdal(url):
 # ------------------------------------------------------------
 # Parallel processing (replacement for asyncio)
 # ------------------------------------------------------------
+
+def create_lasd(name: str):
+
+    try:
+        if not LAS_DATASET.exists():
+
+            arcpy.management.CreateLasDataset(
+                input=DOWNLOAD_FOLDER,
+                out_las_dataset=str(LAS_DATASET),
+                folder_recursion="NO_RECURSION",
+                in_surface_constraints=None,
+                spatial_reference=SPATIAL_REFERENCE,
+                compute_stats="COMPUTE_STATS",
+                relative_paths="ABSOLUTE_PATHS",
+                create_las_prj="ALL_FILES",
+                extent="DEFAULT",
+                boundary=None,
+                add_only_contained_files="INTERSECTED_FILES"
+            )
+
+            # Always ensure files are included (safe to rerun)
+            arcpy.management.AddFilesToLasDataset(
+                LAS_DATASET,
+                DOWNLOAD_FOLDER
+            )
+
+            arcpy.management.BuildLasDatasetPyramid(
+                LAS_DATASET,
+                "CLOSEST_TO_CENTER"
+            )
+        else:
+            arcpy.AddMessage(f'"{LAS_DATASET} already exists, skipping')
+
+    except Exception as e:
+        raise (f'Exception: {e}')
+
 
 def process_all(url_list):
 
@@ -229,26 +264,9 @@ def main():
     process_all(url_list)
     arcpy.AddMessage("Finished downloading files.")
 
-    try:
-        arcpy.management.CreateLasDataset(
-            input=DOWNLOAD_FOLDER,
-            out_las_dataset=LAS_DATASET,
-            folder_recursion="NO_RECURSION",
-            in_surface_constraints=None,
-            spatial_reference=SPATIAL_REFERENCE,
-            compute_stats="COMPUTE_STATS",
-            relative_paths="ABSOLUTE_PATHS",
-            create_las_prj="ALL_FILES",
-            extent="DEFAULT",
-            boundary=None,
-            add_only_contained_files="INTERSECTED_FILES"
-        )
+    arcpy.AddMessage("Adding files to Las Dataset")
 
-        arcpy.management.BuildLasDatasetPyramid(LAS_DATASET, "CLOSEST_TO_CENTER")
-
-    except Exception as e:
-        arcpy.AddMessage(f'Error: {e}')
-
+    create_lasd(LAS_DATASET)
 
 
 if __name__ == "__main__":
