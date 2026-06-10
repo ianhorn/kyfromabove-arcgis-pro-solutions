@@ -11,6 +11,7 @@ import json
 import pdal
 import arcpy
 import requests
+from tqdm import tqdm
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -36,7 +37,10 @@ DOWNLOAD_FOLDER = Path(download_param) if download_param else Path.home() / "Dow
 GEOJSON_FOLDER.mkdir(parents=True, exist_ok=True)
 DOWNLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
-MAX_WORKERS = 4  # max(1, int(os.cpu_count() * 0.75))
+MAX_WORKERS = max(1, int(os.cpu_count() * 0.75))
+
+LAS_DATASET = Path(arcpy.GetParameterAsText(7) or "project_las_dataset.lasd")
+SPATIAL_REFERENCE = arcpy.GetParameterAsText(8) or 'COMPOUNDCRS["",PROJCRS["NAD_1983_StatePlane_Kentucky_FIPS_1600_Feet",BASEGEOGCRS["GCS_North_American_1983",DATUM["D_North_American_1983",ELLIPSOID["GRS_1980",6378137.0,298.257222101]],PRIMEM["Greenwich",0.0],CS[ellipsoidal,2],AXIS["Latitude (lat)",north,ORDER[1]],AXIS["Longitude (lon)",east,ORDER[2]],ANGLEUNIT["Degree",0.0174532925199433]],CONVERSION["Lambert_Conformal_Conic",METHOD["Lambert_Conformal_Conic"],PARAMETER["False_Easting",4921250.0,LENGTHUNIT["Foot_US",0.3048006096012192]],PARAMETER["False_Northing",3280833.333333333,LENGTHUNIT["Foot_US",0.3048006096012192]],PARAMETER["Central_Meridian",-85.75],PARAMETER["Standard_Parallel_1",37.08333333333334],PARAMETER["Standard_Parallel_2",38.66666666666666],PARAMETER["Latitude_Of_Origin",36.33333333333334]],CS[Cartesian,2],AXIS["Easting (X)",east,ORDER[1]],AXIS["Northing (Y)",north,ORDER[2]],LENGTHUNIT["Foot_US",0.3048006096012192]],VERTCRS["NAVD88_depth_(ftUS)",VDATUM["North_American_Vertical_Datum_1988"],CS[vertical,1],AXIS["Gravity-related height (H)",down,LENGTHUNIT["Foot_US",0.3048006096012192]]]]'
 
 
 # ------------------------------------------------------------
@@ -68,6 +72,7 @@ def convert_to_geojson(feature_class):
         raise ValueError("GeoJSON has no features")
 
     return data
+
 
 def get_geometry(geojson):
     return geojson["features"][0]["geometry"]
@@ -101,6 +106,8 @@ def get_assets(search_url, geometry):
         if href:
             urls.append(href)
 
+    arcpy.AddMessage("Url list created")
+
     return urls
 
 
@@ -114,7 +121,7 @@ def download_file(url):
     local_path = DOWNLOAD_FOLDER / Path(url).name
 
     if local_path.exists():
-        arcpy.AddMessage(f"Skipping download: {local_path.name}")
+        arcpy.AddMessage(f"Skipping download: {local_path}.name")
         return str(local_path)
 
     arcpy.AddMessage(f"Downloading: {url}")
@@ -127,7 +134,7 @@ def download_file(url):
                 for chunk in r.iter_content(1024 * 1024):
                     if chunk:
                         f.write(chunk)
-
+                arcpy.AddMessage('Downloading:\n "{local_path}"')
         return str(local_path)
 
     except Exception as e:
@@ -193,15 +200,18 @@ def run_pdal(url):
 def process_all(url_list):
 
     arcpy.AddMessage(f"Processing {len(url_list)} files...")
-
+    
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(run_pdal, url): url for url in url_list}
-        for future in as_completed(futures):
-            url = futures[future]
-            try:
-                future.result()
-            except Exception as e:
-                arcpy.AddWarning(f"Failed {url}: {e}")
+        futures = [executor.submit(run_pdal, url) for url in url_list]
+        with tqdm(total=len(futures), desc="Processing LAS", unit="file") as pbar:
+            for future in as_completed(futures):
+                url = None
+                try:
+                    future.result()
+                except Exception as e:
+                    arcpy.AddWarning(f"Failed: {e}")
+                finally:
+                    pbar.update(1)
 
 
 # ------------------------------------------------------------
@@ -217,7 +227,28 @@ def main():
     arcpy.AddMessage(f"Found {len(url_list)} files.")
 
     process_all(url_list)
-    arcpy.AddMessage("Finished.")
+    arcpy.AddMessage("Finished downloading files.")
+
+    try:
+        arcpy.management.CreateLasDataset(
+            input=DOWNLOAD_FOLDER,
+            out_las_dataset=LAS_DATASET,
+            folder_recursion="NO_RECURSION",
+            in_surface_constraints=None,
+            spatial_reference=SPATIAL_REFERENCE,
+            compute_stats="COMPUTE_STATS",
+            relative_paths="ABSOLUTE_PATHS",
+            create_las_prj="ALL_FILES",
+            extent="DEFAULT",
+            boundary=None,
+            add_only_contained_files="INTERSECTED_FILES"
+        )
+
+        arcpy.management.BuildLasDatasetPyramid(LAS_DATASET, "CLOSEST_TO_CENTER")
+
+    except Exception as e:
+        arcpy.AddMessage(f'Error: {e}')
+
 
 
 if __name__ == "__main__":

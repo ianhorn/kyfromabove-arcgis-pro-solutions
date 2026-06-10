@@ -21,3 +21,5 @@ venv
 .venv
 .vscode/settings.json
 
+Downloads/*
+GeoJSONS/*
