@@ -151,11 +151,9 @@ def download_file(url):
 
 def process_lidar(url):
 
-    name = Path(url).name.replace(".copc.laz", "").replace(".laz", "")
+    name = Path(url).stem.replace(".copc", "")
 
     local_input = download_file(url)
-
-    output_las = DOWNLOAD_FOLDER / f"{name}.las"
 
     arcpy.AddMessage(f"Converting {name}")
 
@@ -163,7 +161,6 @@ def process_lidar(url):
         arcpy.conversion.ConvertLas(
             in_las=local_input,
             target_folder=str(DOWNLOAD_FOLDER),
-            out_las_dataset=str(output_las) + ".lasd",
             file_version="SAME_AS_INPUT",
             compression="NO_COMPRESSION",
             las_options="REARRANGE_POINTS",
@@ -175,12 +172,18 @@ def process_lidar(url):
     except Exception as e:
         arcpy.AddWarning(f"Failed {name}: {e}")
 
-
 # ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
 
 def main():
+
+    SCRATCH = Path(r"Q:\temp\kyfromabove-arcgis-pro-solutions\arcgis_scratch")
+    SCRATCH.mkdir(parents=True, exist_ok=True)
+    arcpy.env.scratchWorkspace = str(SCRATCH)
+    arcpy.env.workspace = str(SCRATCH)
+    arcpy.env.overwriteOutput = True
+    arcpy.env.preserveGlobalIds = True
 
     geojson = convert_to_geojson(AOI)
     geometry = get_geometry(geojson)
