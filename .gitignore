@@ -11,7 +11,8 @@ GpMessages
 .backups
 *.geojson
 pro-project_index
-
+Downloads/*.las
+Downloads/*.laz
 # project
 .DS_Store
 .vscode
@@ -19,3 +20,4 @@ pro-project_index
 venv
 .venv
 .vscode/settings.json
+
